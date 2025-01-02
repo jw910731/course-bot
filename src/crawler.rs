@@ -1,14 +1,78 @@
+use core::str;
 use std::{collections::HashMap, num::ParseIntError, sync::Arc, time::Duration};
 
 use anyhow::{bail, Result};
+use log::trace;
 use reqwest_cookie_store::{CookieStore, CookieStoreMutex};
 use serde::Deserialize;
 use thiserror::Error;
 use tokio::time::sleep;
 
-const CAPTCHA_MAX_RETRY: i32 = 20;
+#[derive(Debug, Error, PartialEq)]
+pub enum NtnuCrawlerError {
+    #[error("course system entered invalid state")]
+    BrokenStateMachine,
+}
 
-pub struct NtnuCrawler {
+impl NtnuCrawlerError {
+    pub fn check_response(text: &str) -> Result<(), Self> {
+        if text.contains("不合法執行選課系統") {
+            return Err(Self::BrokenStateMachine);
+        }
+        Ok(())
+    }
+}
+
+pub struct NtnuCrawlerManager {
+    crawler: NtnuCrawler,
+    max_retries: i32,
+}
+
+impl NtnuCrawlerManager {
+    pub fn new(config: &crate::config::Config, subsite: i32) -> Self {
+        let crawler = NtnuCrawler::new(
+            format!("https://cos{}s.ntnu.edu.tw", subsite),
+            config.captcha_service_uri.clone(),
+            config.ntnu_account.clone(),
+            config.ntnu_password.clone(),
+            config.api_retry,
+            config.captcha_retry,
+        );
+        Self {
+            crawler,
+            max_retries: config.api_retry,
+        }
+    }
+
+    pub async fn init(&mut self) -> Result<()> {
+        self.crawler.clear();
+        self.crawler.login().await?;
+        self.crawler.landing_page().await?;
+        Ok(())
+    }
+
+    pub async fn query(&mut self, course_id: &str) -> Result<bool> {
+        let mut retries = 0;
+        loop {
+            match self.crawler.query(course_id).await {
+                Ok(result) => break Ok(result != 0),
+                Err(e) => {
+                    if e.is::<NtnuCrawlerError>() {
+                        self.init().await?;
+                        if retries > self.max_retries {
+                            break Err(e.into());
+                        }
+                    } else {
+                        break Err(e);
+                    }
+                }
+            }
+            retries += 1;
+        }
+    }
+}
+
+struct NtnuCrawler {
     captcha_solver: CaptchaSolver,
     endpoint_root: String,
     client: reqwest::Client,
@@ -18,14 +82,18 @@ pub struct NtnuCrawler {
     magic_regex: regex::Regex,
     name_regex: regex::Regex,
     count_regex: regex::Regex,
+    max_retry: i32,
+    captcha_retry: i32,
 }
 
 impl NtnuCrawler {
-    pub fn new(
+    fn new(
         ntnu_endpoint_root: String,
         captcha_endpoint_root: String,
         account: String,
         password: String,
+        max_retries: i32,
+        captcha_retries: i32,
     ) -> Self {
         let captcha_solver = CaptchaSolver::new(captcha_endpoint_root);
         let cookie_store = Arc::from(CookieStoreMutex::new(CookieStore::new(None)));
@@ -47,10 +115,16 @@ impl NtnuCrawler {
                 .build()
                 .unwrap(),
             count_regex: regex::Regex::new(r#"['"]Count['"] *: *([0-9]+)"#).unwrap(),
+            max_retry: max_retries,
+            captcha_retry: captcha_retries,
         }
     }
 
-    pub async fn captcha(&mut self) -> Result<String> {
+    fn clear(&mut self) {
+        self.cookie_store.lock().unwrap().clear();
+    }
+
+    async fn captcha(&mut self) -> Result<String> {
         let res = self
             .client
             .get(format!("{}/AasEnrollStudent/RandImage", self.endpoint_root))
@@ -58,6 +132,9 @@ impl NtnuCrawler {
             .await?
             .error_for_status()?;
         let img = res.bytes().await?;
+        if let Ok(text) = str::from_utf8(&img) {
+            NtnuCrawlerError::check_response(&text)?;
+        }
         self.captcha_solver.recognize(&img).await
     }
 
@@ -72,6 +149,7 @@ impl NtnuCrawler {
             .await?
             .error_for_status()?;
         let text = resp.text().await?;
+        NtnuCrawlerError::check_response(&text)?;
         let mtch = self
             .magic_regex
             .captures(&text)
@@ -82,9 +160,9 @@ impl NtnuCrawler {
         Ok(mtch.to_owned())
     }
 
-    pub async fn login(&mut self) -> Result<()> {
+    async fn login(&mut self) -> Result<()> {
         let mut retries = 0;
-        for i in 0..CAPTCHA_MAX_RETRY {
+        for i in 0..self.captcha_retry {
             retries = i;
             let magic = self.login_magic().await?;
             match self.captcha().await {
@@ -124,13 +202,13 @@ impl NtnuCrawler {
                 },
             }
         }
-        if retries >= CAPTCHA_MAX_RETRY {
+        if retries >= self.captcha_retry {
             bail!("login max retry reached")
         }
         Ok(())
     }
 
-    pub async fn landing_page(&mut self) -> Result<()> {
+    async fn landing_page(&mut self) -> Result<()> {
         let resp = self
             .client
             .get(format!("{}/AasEnrollStudent/IndexCtrl", self.endpoint_root))
@@ -139,9 +217,10 @@ impl NtnuCrawler {
             .await?
             .error_for_status()?;
         let name = {
-            let resp_text = resp.text().await?;
+            let text = resp.text().await?;
+            NtnuCrawlerError::check_response(&text)?;
             self.name_regex
-                .captures(resp_text.as_str())
+                .captures(text.as_str())
                 .unwrap()
                 .get(2)
                 .unwrap()
@@ -162,7 +241,8 @@ impl NtnuCrawler {
             .error_for_status()?;
 
         // load main page
-        self.client
+        let resp = self
+            .client
             .get(format!(
                 "{}/AasEnrollStudent/EnrollCtrl",
                 self.endpoint_root
@@ -171,9 +251,14 @@ impl NtnuCrawler {
             .send()
             .await?
             .error_for_status()?;
+        {
+            let text = resp.text().await?;
+            NtnuCrawlerError::check_response(&text)?;
+        }
 
         // load course select page
-        self.client
+        let resp = self
+            .client
             .get(format!(
                 "{}/AasEnrollStudent/CourseQueryCtrl",
                 self.endpoint_root
@@ -182,10 +267,14 @@ impl NtnuCrawler {
             .send()
             .await?
             .error_for_status()?;
+        {
+            let text = resp.text().await?;
+            NtnuCrawlerError::check_response(&text)?;
+        }
         Ok(())
     }
 
-    pub async fn query(&mut self, id: &str) -> Result<i32> {
+    async fn query(&mut self, id: &str) -> Result<i32> {
         let mut retries = 0;
         loop {
             let mut param = HashMap::new();
@@ -207,6 +296,7 @@ impl NtnuCrawler {
                 Ok(resp) => {
                     let resp = resp.error_for_status()?;
                     let text = resp.text().await?;
+                    NtnuCrawlerError::check_response(&text)?;
                     if !text.is_empty() {
                         let count_str = self
                             .count_regex
@@ -223,7 +313,7 @@ impl NtnuCrawler {
                     }
                 }
                 Err(e) => {
-                    if retries < CAPTCHA_MAX_RETRY {
+                    if retries < self.max_retry {
                         sleep(Duration::from_secs(5)).await;
                     } else {
                         break Err(e.into());
@@ -232,18 +322,6 @@ impl NtnuCrawler {
             }
             retries += 1;
         }
-    }
-
-    pub fn print_cookie(&self) {
-        println!(
-            "JSESSIONID={}",
-            self.cookie_store
-                .lock()
-                .unwrap()
-                .get("cos4s.ntnu.edu.tw", "/", "JSESSIONID")
-                .unwrap()
-                .value()
-        )
     }
 }
 

@@ -1,14 +1,20 @@
 use envconfig::Envconfig;
-use std::env;
 
 #[derive(Debug, Envconfig)]
 pub struct Config {
-    #[envconfig(from = "BOT_NTNU_URI_PATT", default = "https://cos{}s.ntnu.edu.tw")]
-    ntnu_uri_pattern: String,
     #[envconfig(from = "BOT_NTNU_ACCOUNT")]
-    ntnu_account: String,
+    pub ntnu_account: String,
     #[envconfig(from = "BOT_NTNU_PASSWORD")]
-    ntnu_password: String,
+    pub ntnu_password: String,
     #[envconfig(from = "BOT_CAPTCHA_URI", default = "http://localhost:8080")]
-    captcha_service_uri: String,
+    pub captcha_service_uri: String,
+    #[envconfig(from = "BOT_NTNU_RETRY", default = "10")]
+    pub api_retry: i32,
+    #[envconfig(from = "BOT_CAPTCHA_RETRY", default = "20")]
+    pub captcha_retry: i32,
+
+    #[envconfig(from = "BOT_DISCORD_TOKEN")]
+    pub discord_token: String,
+    #[envconfig(from = "BOT_DB_PATH", default = "./db")]
+    pub db_path: String,
 }

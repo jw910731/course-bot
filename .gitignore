@@ -1,4 +1,5 @@
 /target
 .devenv
 .direnv
-*.rten
+.env
+/db
