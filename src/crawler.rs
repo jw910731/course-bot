@@ -169,8 +169,10 @@ impl NtnuCrawler {
         for i in 0..self.captcha_retry {
             retries = i;
             let magic = self.login_magic().await?;
+            trace!("start captcha process");
             match self.captcha().await {
                 Ok(challenge) => {
+                    trace!("complete captcha process");
                     let mut param = HashMap::new();
                     param.insert("userid", self.account.as_str());
                     param.insert("password", self.password.as_str());
