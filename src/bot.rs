@@ -217,6 +217,7 @@ impl Bot {
         Ok(
             Client::builder(self.token.as_str(), GatewayIntents::non_privileged())
                 .framework(framework)
+                .status(serenity::all::OnlineStatus::Online)
                 .await
                 .unwrap(),
         )
