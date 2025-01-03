@@ -1,6 +1,6 @@
 FROM rust:alpine3.20 AS builder
 
-RUN apk add --no-cache build-base openssl-dev openssl
+RUN apk add --no-cache build-base openssl-dev openssl-libs-static
 
 WORKDIR /build
 
