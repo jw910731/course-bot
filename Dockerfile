@@ -14,7 +14,7 @@ COPY ./src/ /build/src
 RUN touch /build/src/main.rs && \
     cargo build -r
 
-FROM gcr.io/distroless/cc-debian12
+FROM alpine:3.20
 COPY --from=builder /build/target/release/course-bot /course-bot
 
 CMD [ "/course-bot" ]
