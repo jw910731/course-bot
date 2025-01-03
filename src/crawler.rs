@@ -2,7 +2,7 @@ use core::str;
 use std::{collections::HashMap, num::ParseIntError, sync::Arc, time::Duration};
 
 use anyhow::{bail, Result};
-use log::trace;
+use log::{trace, warn};
 use reqwest_cookie_store::{CookieStore, CookieStoreMutex};
 use serde::Deserialize;
 use thiserror::Error;
@@ -61,10 +61,10 @@ impl NtnuCrawlerManager {
             match self.crawler.query(course_id).await {
                 Ok(result) => break Ok(result != 0),
                 Err(e) => {
-                    if e.is::<NtnuCrawlerError>() {
+                    if e.is::<NtnuCrawlerError>() || e.is::<CaptchaServiceError>() {
                         self.init().await?;
                         if retries > self.max_retries {
-                            break Err(e.into());
+                            break Err(e);
                         }
                     } else {
                         break Err(e);
@@ -199,9 +199,12 @@ impl NtnuCrawler {
                     Ok(CaptchaServiceError::InvalidErr)
                     | Ok(CaptchaServiceError::NoneErr)
                     | Ok(CaptchaServiceError::ParseIntErr(_)) => {
-                        self.cookie_store.lock().unwrap().clear();
+                        self.clear();
                     }
-                    Ok(e) => return Err(e.into()),
+                    Ok(_) => {
+                        warn!("captcha service currently unavailable");
+                        sleep(Duration::from_secs(5)).await;
+                    }
                     Err(e) => return Err(e),
                 },
             }
@@ -377,10 +380,8 @@ impl CaptchaSolver {
             .header("Content-Type", typ.mime_type())
             .body(Vec::from(img))
             .send()
-            .await?;
-        if res.status() != 200 {
-            return Err(CaptchaServiceError::HttpErr(res.status()).into());
-        }
+            .await?
+            .error_for_status()?;
         let resp: CaptchaResponse = res.json().await?;
         self.process(resp.response).map_err(|e| e.into())
     }
