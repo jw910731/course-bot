@@ -45,9 +45,13 @@ impl NtnuCrawlerManager {
     }
 
     pub async fn init(&mut self) -> Result<()> {
+        trace!("start init");
         self.crawler.clear();
+        trace!("start login");
         self.crawler.login().await?;
+        trace!("start landing page");
         self.crawler.landing_page().await?;
+        trace!("end init");
         Ok(())
     }
 
@@ -282,6 +286,7 @@ impl NtnuCrawler {
             param.insert("notFull", "1");
             param.insert("action", "showGrid");
             param.insert("actionButton", "query");
+            trace!("start query request");
             match self
                 .client
                 .post(format!(
@@ -295,6 +300,7 @@ impl NtnuCrawler {
             {
                 Ok(resp) => {
                     let resp = resp.error_for_status()?;
+                    trace!("complete query request");
                     let text = resp.text().await?;
                     NtnuCrawlerError::check_response(&text)?;
                     if !text.is_empty() {
