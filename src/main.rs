@@ -57,7 +57,7 @@ async fn periodic_checker(
                         }
                     }
                     Result::Err(e) => {
-                        warn!("fail to check course {course_id}: {e}");
+                        warn!("fail to check course {course_id}: {e:?}");
                     }
                 }
             }
@@ -86,7 +86,7 @@ async fn periodic_checker(
                 success_list.join(" & ")
             ));
                 if let Err(e) = user_id.direct_message(http_client.clone(), builder).await {
-                    warn!("fail to notify user course available (user: {user_id}, sucess_list: {success_list:?}): {}", e)
+                    warn!("fail to notify user course available (user: {user_id}, sucess_list: {success_list:?}): {:?}", e)
                 }
             }
         }
