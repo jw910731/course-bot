@@ -124,7 +124,13 @@ async fn main() -> anyhow::Result<()> {
                 Result::Err(e) => Result::Err(e),
             }
         } => result,
-        _ = signal_terminate.recv() => Ok(()),
-        _ = signal_interrupt.recv() => Ok(())
+        _ = signal_terminate.recv() => {
+            println!("Start gracefully shutdown");
+            Ok(())
+        },
+        _ = signal_interrupt.recv() => {
+            println!("Start gracefully shutdown");
+            Ok(())
+        }
     }
 }
