@@ -57,7 +57,7 @@ async fn periodic_checker(
                         }
                     }
                     Result::Err(e) => {
-                        warn!("fail to check course {course_id}: {e}");
+                        warn!("fail to check course {course_id}: {e} {}", e.backtrace());
                     }
                 }
             }
