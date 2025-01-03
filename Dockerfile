@@ -14,6 +14,7 @@ COPY ./src/ /build/src
 RUN cargo build -r
 
 FROM gcr.io/distroless/cc-debian12
-COPY --from=builder /build/target/release/course-bot /
+COPY --from=builder /build/target/release/course-bot /course-bot
 
-ENTRYPOINT ["/course-bot"]
+CMD [ "/course-bot" ]
+ENTRYPOINT ["/sh", "-c"]
